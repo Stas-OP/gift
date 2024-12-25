@@ -7,6 +7,8 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKe
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes
 from telegram.request import HTTPXRequest
 from cat import Cat
+from datetime import datetime
+import pytz
 
 # Отключаем предупреждения SSL
 urllib3.disable_warnings()
@@ -36,6 +38,8 @@ def load_cats():
                     cat.happiness = cat_data['happiness']
                     cat.energy = cat_data['energy']
                     cat.last_update = cat_data['last_update']
+                    cat.walk_time = cat_data.get('walk_time')
+                    cat.last_walk_notification = cat_data.get('last_walk_notification')
                     loaded_cats[int(user_id)] = cat
                 return loaded_cats
             except json.JSONDecodeError:
@@ -57,7 +61,9 @@ def save_cats():
             'happiness': cat.happiness,
             'energy': cat.energy,
             'last_update': cat.last_update,
-            'created_at': cat.created_at
+            'created_at': cat.created_at,
+            'walk_time': cat.walk_time,
+            'last_walk_notification': cat.last_walk_notification
         }
     with open('cats_data.json', 'w', encoding='utf-8') as file:
         json.dump(data, file, ensure_ascii=False, indent=4, default=str)
@@ -66,7 +72,7 @@ def save_cats():
 cats = load_cats()
 
 # Добавляем состояния для диалога создания котика
-CHOOSING_NAME, CHOOSING_COLOR = range(2)
+CHOOSING_NAME, CHOOSING_COLOR, SETTING_WALK_TIME = range(3)
 
 # Изменяем список цветов на более компактный
 CAT_COLORS = {
@@ -136,28 +142,48 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("Статус 📊", callback_data='status')
         ]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    inline_markup = InlineKeyboardMarkup(keyboard)
     
     # Создаем клавиатурную кнопку
     keyboard_button = ReplyKeyboardMarkup(
-        [["🐱 Управление котиком"]], 
+        [
+            ["🐱 Управление котиком"],
+            ["⏰ Установить время прогулки"]
+        ], 
         resize_keyboard=True
     )
     
+    # Обработка установки времени прогулки
+    if query.data == 'set_walk_time':
+        await query.message.edit_text(
+            "Введите время прогулки в формате ЧЧ:ММ (например, 14:30):"
+        )
+        return SETTING_WALK_TIME
+
     # Обработка выбора цвета
     if query.data.startswith('color_'):
         if 'cat_name' not in context.user_data:
-            await query.message.edit_text("Что-то пошло не так. Попробуйте начать сначала с /start")
+            await query.message.edit_text(
+                "Что-то пошло не так. Попробуйте начать сначала с /start",
+                reply_markup=InlineKeyboardMarkup([[]])
+            )
             return ConversationHandler.END
             
         color = query.data.replace('color_', '')
         cats[user_id] = Cat(context.user_data['cat_name'], color)
         save_cats()
         
-        await query.message.edit_text(
-            f"Поздравляем! {color.capitalize()} котик {context.user_data['cat_name'].capitalize()} появился у вас! 🐱",
+        # Сначала отправляем сообщение с клавиатурной кнопкой
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"Поздравляем! {color.capitalize()} котик {context.user_data['cat_name'].capitalize()} появился у вас! 🐱",
             reply_markup=keyboard_button
         )
+        
+        # Удаляем сообщение с выбором цвета
+        await query.message.delete()
+        
+        # Показываем основное меню
         await show_main_menu(update, context)
         return ConversationHandler.END
     
@@ -185,14 +211,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == 'status':
         message = "Статус вашего котика:"
     
-    # Генерируем изображение со статусом
+    # Гнерируем изображение со статусом
     image_path = cat.get_status_image()
     
     # Отправляем новое сообщение с фото
     await query.message.reply_photo(
         photo=open(image_path, 'rb'),
         caption=f"{message}\nЧто будем делать дальше?",
-        reply_markup=reply_markup
+        reply_markup=inline_markup
     )
     
     save_cats()
@@ -207,7 +233,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [
-            InlineKeyboardButton("��окормить 🍽", callback_data='feed'),
+            InlineKeyboardButton("Покормить 🍽", callback_data='feed'),
             InlineKeyboardButton("Поиграть 🎮", callback_data='play')
         ],
         [
@@ -219,7 +245,10 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Создаем клавиатурную кнопку
     keyboard_button = ReplyKeyboardMarkup(
-        [["🐱 Управление котиком"]], 
+        [
+            ["🐱 Управление котиком"],
+            ["⏰ Установить время прогулки"]
+        ], 
         resize_keyboard=True
     )
     
@@ -279,6 +308,117 @@ async def handle_keyboard_button(update: Update, context: ContextTypes.DEFAULT_T
             caption="Что будем делать с котиком?",
             reply_markup=inline_markup
         )
+    elif update.message.text == "⏰ Установить время прогулки":
+        user_id = update.effective_user.id
+        if user_id not in cats:
+            await update.message.reply_text("У вас пока нет котика! Используйте /start чтобы завести котика.")
+            return
+        
+        # Получаем текущее время
+        current_time = datetime.now(pytz.timezone('Asia/Novosibirsk')).strftime("%H:%M")
+        await update.message.reply_text(
+            f"Текущее время: {current_time}\n\n"
+            "Введите время прогулки в любом удобном формате:\n"
+            "• ЧЧ:ММ (например, 14:30)\n"
+            "• ЧЧ.ММ (например, 14.30)\n"
+            "• ЧЧ или Ч (например, 14 или 9 - будет установлено начало часа)"
+        )
+        return SETTING_WALK_TIME
+
+async def set_walk_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in cats:
+        await update.message.reply_text("У вас пока нет котика!")
+        return ConversationHandler.END
+
+    time_str = update.message.text
+    cat = cats[user_id]
+    
+    if cat.set_walk_time(time_str):
+        save_cats()  # Сохраняем изменения
+        # Получаем текущее время
+        current_time = datetime.now(pytz.timezone('Asia/Novosibirsk')).strftime("%H:%M")
+        # Отправляе�� сообщение о создании напоминания
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=f"Текущее время: {current_time}\n"
+                 f"Время прогулки установлено на {cat.walk_time}! Я напомню за час и за полчаса до прогулки."
+        )
+        
+        # Генерируем изображение со статусом
+        image_path = cat.get_status_image()
+        
+        # Создаем клавиатуру
+        keyboard = [
+            [
+                InlineKeyboardButton("Покормить 🍽", callback_data='feed'),
+                InlineKeyboardButton("Поиграть 🎮", callback_data='play')
+            ],
+            [
+                InlineKeyboardButton("Уложить спать 😴", callback_data='sleep'),
+                InlineKeyboardButton("Статус 📊", callback_data='status')
+            ]
+        ]
+        inline_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Отправляем сообщение с фото и меню
+        await update.message.reply_photo(
+            photo=open(image_path, 'rb'),
+            caption="Что будем делать с котиком?",
+            reply_markup=inline_markup
+        )
+        return ConversationHandler.END
+    else:
+        # Получаем текущее время
+        current_time = datetime.now(pytz.timezone('Asia/Novosibirsk')).strftime("%H:%M")
+        await update.message.reply_text(
+            f"Текущее время: {current_time}\n\n"
+            "Пожалуйста, введите время в одном из форматов:\n"
+            "• ЧЧ:ММ (например, 14:30)\n"
+            "• ЧЧ.ММ (например, 14.30)\n"
+            "• ЧЧ или Ч (например, 14 или 9 - будет установлено начало часа)"
+        )
+        return SETTING_WALK_TIME
+
+async def check_walk_notifications(context: ContextTypes.DEFAULT_TYPE):
+    current_time = datetime.now(pytz.timezone('Asia/Novosibirsk'))
+    logging.info(f"Checking walk notifications at {current_time}")
+    
+    for user_id, cat in cats.items():
+        try:
+            logging.info(f"Checking cat {cat.name} for user {user_id}")
+            notification = cat.should_notify(current_time)
+            if notification == "time_to_go":
+                logging.info(f"Sending time to go notification to user {user_id}")
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text="🚶‍♀️ Пора выходить на прогулку!"
+                )
+                save_cats()  # Сохраняем состояние после отправки уведомления
+            elif notification == "hour":
+                logging.info(f"Sending hour notification to user {user_id}")
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"🚶‍♂️ Через час пора на прогулку! (в {cat.walk_time})"
+                )
+                save_cats()  # Сохраняем состояние после отправки уведомления
+            elif notification == "half_hour":
+                logging.info(f"Sending half hour notification to user {user_id}")
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"🚶‍♂️ Через полчаса пора на прогулку! (в {cat.walk_time})"
+                )
+                save_cats()  # Сохраняем состояние после отправки уведомления
+            elif notification == "ten_minutes":
+                logging.info(f"Sending 10 minutes notification to user {user_id}")
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"🚶‍♂️ Через 10 минут пора на прогулку! (в {cat.walk_time})"
+                )
+                save_cats()  # Сохраняем состояние после отправки уведомления
+        except Exception as e:
+            logging.error(f"Ошибка при отправке напоминания: {str(e)}")
+            logging.exception("Полная информация об ошибке:")
 
 def main():
     # Создаем приложение
@@ -287,7 +427,7 @@ def main():
         .build()
 
     # Создаем обработчик диалога создания котика
-    conv_handler = ConversationHandler(
+    create_cat_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
             CHOOSING_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, choose_name)],
@@ -296,10 +436,24 @@ def main():
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
+    # Создаем отдельный обработчик для установки времени прогулки
+    walk_time_handler = ConversationHandler(
+        entry_points=[MessageHandler(filters.Regex("^⏰ Установить время прогулки$"), handle_keyboard_button)],
+        states={
+            SETTING_WALK_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_walk_time)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
     # Добавляем обработчики
-    application.add_handler(conv_handler)
+    application.add_handler(create_cat_handler)
+    application.add_handler(walk_time_handler)
     application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_keyboard_button))
+    application.add_handler(MessageHandler(filters.Regex("^🐱 Управление котиком$"), handle_keyboard_button))
+
+    # Добавляем задачу проверки напоминаний каждую минуту
+    job_queue = application.job_queue
+    job_queue.run_repeating(check_walk_notifications, interval=60)
 
     # Запускаем бота
     application.run_polling(drop_pending_updates=True)

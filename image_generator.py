@@ -89,7 +89,7 @@ class ImageGenerator:
         stats_font = self.font_stats
 
         # Заголовок с декоративными линиями
-        title = f"котик {name.capitalize()} ~ {age_days} дн"
+        title = f"котик {name.capitalize()} ({age_days} дн.)"
         title_width = title_font.getlength(title)
         x_center = (WIDTH - title_width) // 2
         

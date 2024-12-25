@@ -18,6 +18,8 @@ class Cat:
         self.image_generator = ImageGenerator()
         self.walk_time = None  # Время прогулки в формате HH:MM
         self.last_walk_notification = None  # Время последнего напоминания
+        self.last_love_message = None  # Дата последнего сообщения о любви
+        self.love_message_time = None  # Запланированное время отправки сообщения о любви
 
     def set_walk_time(self, time_str):
         """Установить время прогулки"""
@@ -44,6 +46,12 @@ class Cat:
             return True
         except (ValueError, TypeError):
             return False
+
+    def remove_walk_time(self):
+        """Удалить время прогулки"""
+        self.walk_time = None
+        self.last_walk_notification = None
+        return True
 
     def get_walk_time(self):
         """Получить время прогулки"""
@@ -73,7 +81,7 @@ class Cat:
         logging.info(f"Last notification: {self.last_walk_notification}")
 
         # Проверяем, нужно ли отправить уведомление
-        if -1 <= minutes_until_walk <= 1:  # Точно время (с погрешностью в 1 минуту)
+        if -1 <= minutes_until_walk <= 1:  # Точн�� время (с погрешностью в 1 минуту)
             if not self.last_walk_notification or \
                 (current_time - tz.localize(datetime.fromisoformat(self.last_walk_notification))).total_seconds() > 60:
                 self.last_walk_notification = current_time.isoformat()
@@ -173,3 +181,42 @@ class Cat:
         now = datetime.now(pytz.timezone('Asia/Novosibirsk'))
         days = (now - created).days
         return max(1, days)  # Возвращаем минимум 1 день
+
+    def get_love_message(self):
+        """Генерирует случайное сообщение о любви от котика"""
+        messages = [
+            f"Мяу! {self.owner_m}, я тебя люблю! ❤️",
+            f"*Трётся о ногу* {self.owner_m}, ты самый лучший! 😻",
+            f"Мур-мур! {self.owner_m}, я так рад, что ты у меня есть! 💖",
+            f"*Мурлычет* {self.owner_m}, ты мой любимый человек! 🐱💕",
+            f"Мяу-мяу! {self.owner_m}, спасибо что заботишься обо мне! 💝"
+        ]
+        return messages[int(time.time()) % len(messages)]
+
+    def should_send_love(self, current_time):
+        """Проверяет, нужно ли отправить сообщение о любви"""
+        # Не отправляем сообщения ночью (с 22:00 до 8:00)
+        if current_time.hour < 8 or current_time.hour >= 22:
+            return False
+        
+        # Проверяем, было ли уже отправлено сообщение сегодня
+        if self.last_love_message:
+            last_message_date = datetime.fromisoformat(self.last_love_message).date()
+            if last_message_date == current_time.date():
+                return False
+        
+        # Если время отправки еще не запланировано или это новый день
+        if not self.love_message_time or \
+           (self.last_love_message and datetime.fromisoformat(self.last_love_message).date() < current_time.date()):
+            # Генерируем случайное время между 8:00 и 21:59
+            random_hour = 8 + (int(time.time()) % 14)  # от 8 до 21
+            random_minute = int(time.time()) % 60
+            self.love_message_time = f"{random_hour:02d}:{random_minute:02d}"
+        
+        # Проверяем, наступило ли запланированное время
+        if self.love_message_time == current_time.strftime("%H:%M"):
+            self.last_love_message = current_time.isoformat()
+            self.love_message_time = None  # Сбрасываем запланированное время
+            return True
+            
+        return False

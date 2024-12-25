@@ -106,15 +106,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def choose_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['cat_name'] = update.message.text
     
-    # Создаем инлайн клавиатуру с цветами и сердечками
+    # Создаем инлайн клавиатуру с цветами и квадратиками
     keyboard = [
         [
-            InlineKeyboardButton("Серый 🤍", callback_data='color_серый'),
-            InlineKeyboardButton("Белый 🤍", callback_data='color_белый')
+            InlineKeyboardButton("Серый ⬜️", callback_data='color_серый'),
+            InlineKeyboardButton("Белый ⬜️", callback_data='color_белый')
         ],
         [
-            InlineKeyboardButton("Рыжий 🤍", callback_data='color_рыжий'),
-            InlineKeyboardButton("Чёрный 🖤", callback_data='color_чёрный')
+            InlineKeyboardButton("Рыжий 🟧", callback_data='color_рыжий'),
+            InlineKeyboardButton("Чёрный ⬛️", callback_data='color_чёрный')
         ]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -131,11 +131,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     user_id = update.effective_user.id
     
+    # Обработка кнопки "Вернуться назад"
+    if query.data == 'back_to_menu':
+        # Удаляем сообщение с ввод��м времени
+        await query.message.delete()
+        
+        # Создаем клавиатуру
+        keyboard = [
+            [
+                InlineKeyboardButton("Покормить 🍽", callback_data='feed'),
+                InlineKeyboardButton("Поиграть 🎮", callback_data='play')
+            ],
+            [
+                InlineKeyboardButton("Уложить спать 😴", callback_data='sleep'),
+                InlineKeyboardButton("Статус 📊", callback_data='status')
+            ]
+        ]
+        inline_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Генерируем изображение со статусом
+        cat = cats[user_id]
+        image_path = cat.get_status_image()
+        
+        # Отправляем сообщение с фото и меню
+        await query.message.reply_photo(
+            photo=open(image_path, 'rb'),
+            caption="Что будем делать с котиком?",
+            reply_markup=inline_markup
+        )
+        return ConversationHandler.END
+    
     # Создаем клавиатуру один раз в начале функции
     keyboard = [
         [
             InlineKeyboardButton("Покормить 🍽", callback_data='feed'),
-            InlineKeyboardButton("Поиграть 🎮", callback_data='play')
+            InlineKeyboardButton("Поиг��ать 🎮", callback_data='play')
         ],
         [
             InlineKeyboardButton("Уложить спать 😴", callback_data='sleep'),
@@ -147,8 +177,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Создаем клавиатурную кнопку
     keyboard_button = ReplyKeyboardMarkup(
         [
-            ["🐱 Управление котиком"],
-            ["⏰ Установить время прогулки"]
+            ["🐱 Управление котиком", "⏰ Установить время прогулки"]
         ], 
         resize_keyboard=True
     )
@@ -246,8 +275,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Создаем клавиатурную кнопку
     keyboard_button = ReplyKeyboardMarkup(
         [
-            ["🐱 Управление котиком"],
-            ["⏰ Установить время прогулки"]
+            ["🐱 Управление котиком", "⏰ Установить время прогулки"]
         ], 
         resize_keyboard=True
     )
@@ -314,6 +342,10 @@ async def handle_keyboard_button(update: Update, context: ContextTypes.DEFAULT_T
             await update.message.reply_text("У вас пока нет котика! Используйте /start чтобы завести котика.")
             return
         
+        # Создаем клавиатуру с кнопкой "Вернуться назад"
+        keyboard = [[InlineKeyboardButton("↩️ Вернуться назад", callback_data='back_to_menu')]]
+        inline_markup = InlineKeyboardMarkup(keyboard)
+        
         # Получаем текущее время
         current_time = datetime.now(pytz.timezone('Asia/Novosibirsk')).strftime("%H:%M")
         await update.message.reply_text(
@@ -321,7 +353,8 @@ async def handle_keyboard_button(update: Update, context: ContextTypes.DEFAULT_T
             "Введите время прогулки в любом удобном формате:\n"
             "• ЧЧ:ММ (например, 14:30)\n"
             "• ЧЧ.ММ (например, 14.30)\n"
-            "• ЧЧ или Ч (например, 14 или 9 - будет установлено начало часа)"
+            "• ЧЧ или Ч (например, 14 или 9 - будет установлено начало часа)",
+            reply_markup=inline_markup
         )
         return SETTING_WALK_TIME
 
@@ -338,7 +371,7 @@ async def set_walk_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         save_cats()  # Сохраняем изменения
         # Получаем текущее время
         current_time = datetime.now(pytz.timezone('Asia/Novosibirsk')).strftime("%H:%M")
-        # Отправляе�� сообщение о создании напоминания
+        # Отправляем сообщение о создании напоминания
         await context.bot.send_message(
             chat_id=user_id,
             text=f"Текущее время: {current_time}\n"
@@ -438,9 +471,12 @@ def main():
 
     # Создаем отдельный обработчик для установки времени прогулки
     walk_time_handler = ConversationHandler(
-        entry_points=[MessageHandler(filters.Regex("^⏰ Установить время прогулки$"), handle_keyboard_button)],
+        entry_points=[MessageHandler(filters.TEXT & filters.Regex("^⏰ Установить время прогулки$"), handle_keyboard_button)],
         states={
-            SETTING_WALK_TIME: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_walk_time)]
+            SETTING_WALK_TIME: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, set_walk_time),
+                CallbackQueryHandler(button_handler, pattern='^back_to_menu$')
+            ]
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
@@ -449,7 +485,8 @@ def main():
     application.add_handler(create_cat_handler)
     application.add_handler(walk_time_handler)
     application.add_handler(CallbackQueryHandler(button_handler))
-    application.add_handler(MessageHandler(filters.Regex("^🐱 Управление котиком$"), handle_keyboard_button))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^🐱 Управление котиком$"), handle_keyboard_button))
+    application.add_handler(MessageHandler(filters.TEXT & filters.Regex("^⏰ Установить время прогулки$"), handle_keyboard_button))
 
     # Добавляем задачу проверки напоминаний каждую минуту
     job_queue = application.job_queue
